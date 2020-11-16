@@ -1915,6 +1915,7 @@ static void dp_display_attention_work(struct work_struct *work)
 			dp_audio_enable(dp, true);
 		}
 
+
 		mutex_unlock(&dp->session_lock);
 		if (rc)
 			goto exit;
