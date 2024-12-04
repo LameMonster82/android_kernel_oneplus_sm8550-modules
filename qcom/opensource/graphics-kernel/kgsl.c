@@ -304,7 +304,6 @@ static void add_dmabuf_list(struct kgsl_dma_buf_meta *metadata)
 
 static void remove_dmabuf_list(struct kgsl_dma_buf_meta *metadata)
 {
-	struct kgsl_device *device = dev_get_drvdata(metadata->attach->dev);
 	struct dmabuf_list_entry *dle = metadata->dle;
 
 	if (!dle)
