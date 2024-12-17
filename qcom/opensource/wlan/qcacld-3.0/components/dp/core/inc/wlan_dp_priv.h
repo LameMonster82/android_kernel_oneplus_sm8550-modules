@@ -119,7 +119,6 @@ struct dp_rtpm_tput_policy_context {
  * @rx_thread_affinity_mask: CPU mask to affine Rx_thread
  * @cpu_map_list: RPS map for different RX queues
  * @multicast_replay_filter: enable filtering of replayed multicast packets
- * @rx_wakelock_timeout: Amount of time to hold wakelock for RX unicast packets
  * @num_dp_rx_threads: number of dp rx threads
  * @enable_dp_trace: Enable/Disable DP trace
  * @dp_trace_config: DP trace configuration
@@ -182,7 +181,6 @@ struct wlan_dp_psoc_cfg {
 	uint32_t rx_thread_affinity_mask;
 	uint8_t cpu_map_list[CFG_DP_RPS_RX_QUEUE_CPU_MAP_LIST_LEN];
 	bool multicast_replay_filter;
-	uint32_t rx_wakelock_timeout;
 	uint8_t num_dp_rx_threads;
 #ifdef CONFIG_DP_TRACE
 	bool enable_dp_trace;
@@ -521,7 +519,6 @@ struct dp_direct_link_context {
  * @dp_direct_link_ctx: DP Direct Link context
  * @rx_skip_qdisc_chk_conc:rx skip qdisc check connection
  * @arp_connectivity_map: ARP connectiviy map
- * @rx_wake_lock: rx wake lock
  * @ol_enable: Enable/Disable offload
  */
 struct wlan_dp_psoc_context {
@@ -592,8 +589,6 @@ struct wlan_dp_psoc_context {
 	qdf_atomic_t rx_skip_qdisc_chk_conc;
 
 	uint32_t arp_connectivity_map;
-
-	qdf_wake_lock_t rx_wake_lock;
 
 	enum RX_OFFLOAD ol_enable;
 #ifdef FEATURE_DIRECT_LINK
