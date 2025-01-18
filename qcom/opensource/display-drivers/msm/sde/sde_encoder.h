@@ -244,6 +244,7 @@ struct sde_encoder_virt {
 	struct kthread_work disable_autorefresh_work;
 #endif
 	struct input_handler *input_handler;
+	bool input_handler_registered;
 	bool vblank_enabled;
 	bool idle_pc_restore;
 	enum frame_trigger_mode_type frame_trigger_mode;
