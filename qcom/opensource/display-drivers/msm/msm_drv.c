@@ -61,6 +61,11 @@
 #if defined(CONFIG_PXLW_IRIS) || defined(CONFIG_PXLW_SOFT_IRIS)
 #include "dsi_iris_api.h"
 #endif
+#include "sde_fence.h"
+
+#ifdef CONFIG_DRM_SDE_SPECIFIC_PANEL
+#include "dsi/dsi_panel_driver.h"
+#endif /* CONFIG_DRM_SDE_SPECIFIC_PANEL */
 
 /*
  * MSM driver version:
@@ -2329,6 +2334,7 @@ static int __init msm_drm_register(void)
 		return -EINVAL;
 
 	DBG("init");
+        sde_kmem_pool_init();
 	sde_rsc_rpmh_register();
 	sde_rsc_register();
 	msm_smmu_driver_init();
