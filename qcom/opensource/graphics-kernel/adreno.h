@@ -438,8 +438,6 @@ struct adreno_gpu_core {
 	u32 uche_gmem_alignment;
 	size_t gmem_size;
 	u32 bus_width;
-	/** @snapshot_size: Size of the static snapshot region in bytes */
-	u32 snapshot_size;
 };
 
 /**
@@ -527,7 +525,6 @@ struct adreno_dispatch_ops {
  * @lm_threshold_cross: number of current peaks exceeding threshold
  * @ifpc_count: Number of times the GPU went into IFPC
  * @highest_bank_bit: Value of the highest bank bit
- * @csdev: Pointer to a coresight device (if applicable)
  * @gpmu_throttle_counters - counteers for number of throttled clocks
  * @irq_storm_work: Worker to handle possible interrupt storms
  * @active_list: List to track active contexts
@@ -608,15 +605,6 @@ struct adreno_device {
 
 	unsigned int highest_bank_bit;
 	unsigned int quirks;
-
-#ifdef CONFIG_QCOM_KGSL_CORESIGHT
-	/** @gx_coresight:  A coresight instance for GX */
-	struct adreno_coresight_device gx_coresight;
-	/** @gx_coresight:  A coresight instance for CX */
-	struct adreno_coresight_device cx_coresight;
-	/** @funnel_gfx:  A coresight instance for gfx funnel */
-	struct adreno_funnel_device funnel_gfx;
-#endif
 
 	uint32_t gpmu_throttle_counters[ADRENO_GPMU_THROTTLE_COUNTERS];
 	struct work_struct irq_storm_work;
@@ -845,8 +833,6 @@ struct adreno_gpudev {
 	/* GPU specific function hooks */
 	int (*probe)(struct platform_device *pdev, u32 chipid,
 		const struct adreno_gpu_core *gpucore);
-	void (*snapshot)(struct adreno_device *adreno_dev,
-				struct kgsl_snapshot *snapshot);
 	irqreturn_t (*irq_handler)(struct adreno_device *adreno_dev);
 	int (*init)(struct adreno_device *adreno_dev);
 	void (*remove)(struct adreno_device *adreno_dev);
@@ -983,9 +969,9 @@ int adreno_set_constraint(struct kgsl_device *device,
 				struct kgsl_context *context,
 				struct kgsl_device_constraint *constraint);
 
-void adreno_snapshot(struct kgsl_device *device,
+static inline void adreno_snapshot(struct kgsl_device *device,
 		struct kgsl_snapshot *snapshot,
-		struct kgsl_context *context, struct kgsl_context *context_lpac);
+		struct kgsl_context *context, struct kgsl_context *context_lpac) {}
 
 int adreno_reset(struct kgsl_device *device, int fault);
 

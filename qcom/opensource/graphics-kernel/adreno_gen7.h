@@ -17,9 +17,6 @@
 #define PIPE_BV 2
 #define PIPE_LPAC 3
 
-/* Forward struct declaration */
-struct gen7_snapshot_block_list;
-
 extern const struct adreno_power_ops gen7_gmu_power_ops;
 extern const struct adreno_power_ops gen7_hwsched_power_ops;
 extern const struct adreno_perfcounters adreno_gen7_perfcounters;
@@ -102,8 +99,6 @@ struct adreno_gen7_core {
 	u64 ctxt_record_size;
 	/** @highest_bank_bit: Highest bank bit value */
 	u32 highest_bank_bit;
-	/** @gen7_snapshot_block_list: Device-specific blocks dumped in the snapshot */
-	const struct gen7_snapshot_block_list *gen7_snapshot_block_list;
 	/** @gmu_hub_clk_freq: Gmu hub interface clock frequency */
 	u64 gmu_hub_clk_freq;
 	/**

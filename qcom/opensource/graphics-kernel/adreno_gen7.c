@@ -343,8 +343,6 @@ int gen7_init(struct adreno_device *adreno_dev)
 	if (of_fdt_get_ddrtype() == 0x7)
 		adreno_dev->highest_bank_bit = 14;
 
-	gen7_crashdump_init(adreno_dev);
-
 	return adreno_allocate_global(device, &adreno_dev->pwrup_reglist,
 		PAGE_SIZE, 0, 0, KGSL_MEMDESC_PRIVILEGED,
 		"powerup_register_list");
@@ -1417,8 +1415,6 @@ static irqreturn_t gen7_irq_handler(struct adreno_device *adreno_dev)
 
 	ret = adreno_irq_callbacks(adreno_dev, gen7_irq_funcs, status);
 
-	trace_kgsl_gen7_irq_status(adreno_dev, status);
-
 done:
 	/* If hard fault, then let snapshot turn off the keepalive */
 	if (!(adreno_gpu_fault(adreno_dev) & ADRENO_HARD_FAULT))
@@ -1742,9 +1738,6 @@ static void gen7_power_stats(struct adreno_device *adreno_dev,
 		c = counter_delta(device, GEN7_GMU_CX_GMU_POWER_COUNTER_XOCLK_3_L,
 			&busy->throttle_cycles[2]);
 
-		if (a || b || c)
-			trace_kgsl_bcl_clock_throttling(a, b, c);
-
 		if (adreno_is_gen7_2_x_family(adreno_dev)) {
 			u32 bcl_throttle = counter_delta(device,
 				GEN7_GMU_CX_GMU_POWER_COUNTER_XOCLK_5_L, &busy->bcl_throttle);
@@ -1799,15 +1792,15 @@ static void gen7_set_isdb_breakpoint_registers(struct adreno_device *adreno_dev)
 	struct clk *clk;
 	int ret;
 
-	if (!device->set_isdb_breakpoint || device->ftbl->is_hwcg_on(device)
-			|| device->qdss_gfx_virt == NULL || !device->force_panic)
+	if (device->ftbl->is_hwcg_on(device)
+			|| device->qdss_gfx_virt == NULL)
 		return;
 
 	clk = clk_get(&device->pdev->dev, "apb_pclk");
 
 	if (IS_ERR(clk)) {
 		dev_err(device->dev, "Unable to get QDSS clock\n");
-		goto err;
+		return;
 	}
 
 	ret = clk_prepare_enable(clk);
@@ -1815,42 +1808,19 @@ static void gen7_set_isdb_breakpoint_registers(struct adreno_device *adreno_dev)
 	if (ret) {
 		dev_err(device->dev, "QDSS Clock enable error: %d\n", ret);
 		clk_put(clk);
-		goto err;
-	}
-
-	/* Issue break command for eight SPs */
-	isdb_write(device->qdss_gfx_virt, 0x0000);
-	isdb_write(device->qdss_gfx_virt, 0x1000);
-	isdb_write(device->qdss_gfx_virt, 0x2000);
-	isdb_write(device->qdss_gfx_virt, 0x3000);
-	isdb_write(device->qdss_gfx_virt, 0x4000);
-	isdb_write(device->qdss_gfx_virt, 0x5000);
-	isdb_write(device->qdss_gfx_virt, 0x6000);
-	isdb_write(device->qdss_gfx_virt, 0x7000);
-
-	/* gen7_2_x has additional SPs */
-	if (adreno_is_gen7_2_x_family(adreno_dev)) {
-		isdb_write(device->qdss_gfx_virt, 0x8000);
-		isdb_write(device->qdss_gfx_virt, 0x9000);
-		isdb_write(device->qdss_gfx_virt, 0xa000);
-		isdb_write(device->qdss_gfx_virt, 0xb000);
+		return;
 	}
 
 	clk_disable_unprepare(clk);
 	clk_put(clk);
 
 	return;
-
-err:
-	/* Do not force kernel panic if isdb writes did not go through */
-	device->force_panic = false;
 }
 
 const struct gen7_gpudev adreno_gen7_hwsched_gpudev = {
 	.base = {
 		.reg_offsets = gen7_register_offsets,
 		.probe = gen7_hwsched_probe,
-		.snapshot = gen7_hwsched_snapshot,
 		.irq_handler = gen7_irq_handler,
 		.iommu_fault_block = gen7_iommu_fault_block,
 		.preemption_context_init = gen7_preemption_context_init,
@@ -1877,7 +1847,6 @@ const struct gen7_gpudev adreno_gen7_gmu_gpudev = {
 	.base = {
 		.reg_offsets = gen7_register_offsets,
 		.probe = gen7_gmu_device_probe,
-		.snapshot = gen7_gmu_snapshot,
 		.irq_handler = gen7_irq_handler,
 		.rb_start = gen7_rb_start,
 		.gpu_keepalive = gen7_gpu_keepalive,

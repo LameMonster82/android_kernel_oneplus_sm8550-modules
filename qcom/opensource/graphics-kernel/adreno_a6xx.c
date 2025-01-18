@@ -2241,16 +2241,6 @@ static void a6xx_set_isdb_breakpoint_registers(struct adreno_device *adreno_dev)
 		goto err;
 	}
 
-	/* Issue break command for all eight SPs */
-	isdb_write(device->qdss_gfx_virt, 0x0000);
-	isdb_write(device->qdss_gfx_virt, 0x1000);
-	isdb_write(device->qdss_gfx_virt, 0x2000);
-	isdb_write(device->qdss_gfx_virt, 0x3000);
-	isdb_write(device->qdss_gfx_virt, 0x4000);
-	isdb_write(device->qdss_gfx_virt, 0x5000);
-	isdb_write(device->qdss_gfx_virt, 0x6000);
-	isdb_write(device->qdss_gfx_virt, 0x7000);
-
 	clk_disable_unprepare(clk);
 	clk_put(clk);
 
