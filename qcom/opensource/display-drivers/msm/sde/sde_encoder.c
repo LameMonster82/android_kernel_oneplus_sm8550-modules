@@ -5538,6 +5538,7 @@ void sde_encoder_kickoff(struct drm_encoder *drm_enc, bool config_changed)
 	SDE_ATRACE_END("encoder_kickoff");
 }
 
+#if 0
 void sde_encoder_helper_get_pp_line_count(struct drm_encoder *drm_enc,
 			struct sde_hw_pp_vsync_info *info)
 {
@@ -5563,6 +5564,7 @@ void sde_encoder_helper_get_pp_line_count(struct drm_encoder *drm_enc,
 		}
 	}
 }
+#endif
 
 void sde_encoder_get_transfer_time(struct drm_encoder *drm_enc,
 			u32 *transfer_time_us)
