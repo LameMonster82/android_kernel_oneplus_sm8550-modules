@@ -2728,7 +2728,16 @@ static int dp_display_pre_disable(struct dp_display *dp_display, void *panel)
 	dp_display_clear_colorspaces(dp_display);
 
 clean:
-	if (dp_panel->audio_supported)
+	/*
+	 * Skip audio teardown for transient reconfigurations (HPD still high,
+	 * not in PM suspend). dp_audio_off() sends EXT_DISPLAY_CABLE_DISCONNECT
+	 * to the ext_disp driver, which removes the HDMI audio route from the
+	 * Android media router and triggers visible "display reconnected" events.
+	 * dp_audio_on() in post_enable is made idempotent, so keeping audio
+	 * alive here is safe.
+	 */
+	if (dp_panel->audio_supported &&
+	    !(dp_display_is_ready(dp) && !dp_display_state_is(DP_STATE_SUSPENDED)))
 		dp_panel->audio->off(dp_panel->audio, false);
 
 	rc = dp_display_stream_pre_disable(dp, dp_panel);
@@ -2847,16 +2856,18 @@ static int dp_display_unprepare(struct dp_display *dp_display, void *panel)
 	mutex_lock(&dp->session_lock);
 
 	/*
-	 * Check if the power off sequence was triggered
-	 * by a source initialated action like framework
-	 * reboot or suspend-resume but not from normal
-	 * hot plug. If connector is in MST mode, skip
-	 * powering down host as aux needs to be kept
-	 * alive to handle hot-plug sideband message.
+	 * Only tear down the DP host on a genuine source-initiated power-down
+	 * (i.e. system suspend/resume). For all other cases — including
+	 * framework-triggered reconfigurations such as internal panel refresh
+	 * rate switches — the cable is still physically connected (HPD high),
+	 * so keeping the host alive avoids a full link re-training cycle that
+	 * would cause the external display to briefly disconnect. Cable unplug
+	 * is handled separately via dp_display_handle_disconnect(), which calls
+	 * dp_display_host_unready() directly. MST mode already follows this
+	 * same keep-alive policy.
 	 */
 	if (dp_display_is_ready(dp) &&
-		(dp_display_state_is(DP_STATE_SUSPENDED) ||
-		!dp->mst.mst_active))
+		dp_display_state_is(DP_STATE_SUSPENDED))
 		flags |= DP_PANEL_SRC_INITIATED_POWER_DOWN;
 
 	if (dp->active_stream_cnt)

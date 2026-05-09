@@ -105,6 +105,7 @@ static void dp_bridge_pre_enable(struct drm_bridge *drm_bridge)
 		       bridge->id, rc);
 		return;
 	}
+	bridge->locked_timing = bridge->dp_mode.timing;
 
 	rc = dp->prepare(dp, bridge->dp_panel);
 	if (rc) {
@@ -115,6 +116,11 @@ static void dp_bridge_pre_enable(struct drm_bridge *drm_bridge)
 
 	/* for SST force stream id, start slot and total slots to 0 */
 	dp->set_stream_info(dp, bridge->dp_panel, 0, 0, 0, 0, 0);
+
+	if (bridge->skip_stream_cycle) {
+		bridge->skip_stream_cycle = false;
+		return;
+	}
 
 	rc = dp->enable(dp, bridge->dp_panel);
 	if (rc)
@@ -181,8 +187,34 @@ static void dp_bridge_disable(struct drm_bridge *drm_bridge)
 		return;
 	}
 
+	bridge->skip_stream_cycle = false;
+
+	/*
+	 * Detect fps-only mode changes: after drm_atomic_helper_swap_state,
+	 * connector->state already reflects the incoming (new) state. If the
+	 * new CRTC mode has the same resolution as the locked timing it means
+	 * SurfaceFlinger is only changing fps (e.g. touch boost). Keep the
+	 * stream alive so the monitor never loses sync.
+	 */
+	if (bridge->locked_timing.h_active != 0 &&
+	    bridge->connector->state &&
+	    bridge->connector->state->crtc &&
+	    bridge->connector->state->crtc->state) {
+		struct drm_crtc_state *new_crtc_state =
+			bridge->connector->state->crtc->state;
+
+		if (new_crtc_state->adjusted_mode.hdisplay ==
+				bridge->locked_timing.h_active &&
+		    new_crtc_state->adjusted_mode.vdisplay ==
+				bridge->locked_timing.v_active)
+			bridge->skip_stream_cycle = true;
+	}
+
 	if (dp)
 		sde_connector_helper_bridge_disable(bridge->connector);
+
+	if (bridge->skip_stream_cycle)
+		return;
 
 	rc = dp->pre_disable(dp, bridge->dp_panel);
 	if (rc) {
@@ -215,11 +247,13 @@ static void dp_bridge_post_disable(struct drm_bridge *drm_bridge)
 
 	dp = bridge->display;
 
-	rc = dp->disable(dp, bridge->dp_panel);
-	if (rc) {
-		DP_ERR("[%d] DP display disable failed, rc=%d\n",
-		       bridge->id, rc);
-		return;
+	if (!bridge->skip_stream_cycle) {
+		rc = dp->disable(dp, bridge->dp_panel);
+		if (rc) {
+			DP_ERR("[%d] DP display disable failed, rc=%d\n",
+			       bridge->id, rc);
+			return;
+		}
 	}
 
 	rc = dp->unprepare(dp, bridge->dp_panel);
@@ -258,6 +292,25 @@ static void dp_bridge_mode_set(struct drm_bridge *drm_bridge,
 	dp->convert_to_dp_mode(dp, bridge->dp_panel, adjusted_mode,
 			&bridge->dp_mode);
 
+	/*
+	 * If the new mode has the same resolution as the current one, keep the
+	 * current timing instead of adopting the new fps. SurfaceFlinger mirrors
+	 * the internal panel's Hz boost (touch/CPU boost) to all displays,
+	 * including the external DP output. Without this guard every boost event
+	 * triggers a stream clock change (e.g. 60→100 fps), forcing the monitor
+	 * to re-acquire sync and causing a visible blank for 0.5–2 seconds. A
+	 * genuine resolution change (different h_active or v_active) still goes
+	 * through normally.
+	 *
+	 * locked_timing (stored in dp_bridge) is used instead of dp_panel->pinfo
+	 * because pinfo is zeroed by dp_panel_deinit_panel_info() during every
+	 * unprepare cycle, which runs before mode_set in the atomic commit order.
+	 */
+	if (bridge->locked_timing.h_active != 0 &&
+	    bridge->dp_mode.timing.h_active == bridge->locked_timing.h_active &&
+	    bridge->dp_mode.timing.v_active == bridge->locked_timing.v_active)
+		bridge->dp_mode.timing = bridge->locked_timing;
+
 	dp->clear_reservation(dp, bridge->dp_panel);
 }
 
@@ -293,7 +346,25 @@ static bool dp_bridge_mode_fixup(struct drm_bridge *drm_bridge,
 
 	dp->convert_to_dp_mode(dp, bridge->dp_panel, mode, &dp_mode);
 	dp->clear_reservation(dp, bridge->dp_panel);
-	convert_to_drm_mode(&dp_mode, adjusted_mode);
+
+	/*
+	 * If the new mode has the same resolution as the locked timing, keep
+	 * the current timing. This prevents the SDE CRTC from being
+	 * reprogrammed to a different pixel clock (e.g. 319750→543500 KHz for
+	 * a 60→100 fps switch). Without this, the SDE CRTC and DP controller
+	 * run at mismatched clocks, causing the monitor to blank while
+	 * skip_stream_cycle keeps the DP stream alive.
+	 */
+	if (bridge->locked_timing.h_active != 0 &&
+	    dp_mode.timing.h_active == bridge->locked_timing.h_active &&
+	    dp_mode.timing.v_active == bridge->locked_timing.v_active) {
+		struct dp_display_mode locked_mode = dp_mode;
+
+		locked_mode.timing = bridge->locked_timing;
+		convert_to_drm_mode(&locked_mode, adjusted_mode);
+	} else {
+		convert_to_drm_mode(&dp_mode, adjusted_mode);
+	}
 end:
 	return ret;
 }
@@ -526,6 +597,8 @@ int dp_connector_atomic_check(struct drm_connector *connector,
 	struct sde_connector *sde_conn;
 	struct drm_connector_state *old_state;
 	struct drm_connector_state *c_state;
+	struct dp_display *dp;
+	struct dp_bridge *bridge;
 
 	if (!connector || !display || !a_state)
 		return -EINVAL;
@@ -547,6 +620,52 @@ int dp_connector_atomic_check(struct drm_connector *connector,
 	if (c_state->colorspace != old_state->colorspace) {
 		DP_DEBUG("colorspace has been updated\n");
 		sde_conn->colorspace_updated = true;
+	}
+
+	/*
+	 * Suppress fps-only mode changes on the DP output.
+	 *
+	 * When SurfaceFlinger's content-detection logic switches the DP display
+	 * between refresh rates (e.g. 100 fps idle ↔ 30 fps active), it submits
+	 * an atomic commit that sets mode_changed=true on the CRTC.  Even though
+	 * dp_bridge_mode_fixup (Fix 7) locks adjusted_mode and skip_stream_cycle
+	 * (Fix 6) keeps the DP controller running, mode_changed=true still drives
+	 * sde_encoder_virt_disable → phys->ops.disable, which shuts down the SDE
+	 * timing engine and causes a visible blank on the external monitor.
+	 *
+	 * Fix: if locked_timing is set (DP stream is live) and the new CRTC mode
+	 * has the same resolution as the locked timing, this is an fps-only change.
+	 * Restore the CRTC mode to the old mode and clear mode_changed so that
+	 * drm_atomic_crtc_needs_modeset() returns false and the encoder
+	 * disable/enable cycle is skipped entirely.  Genuine resolution changes
+	 * (different hdisplay/vdisplay) still go through normally.
+	 *
+	 * Keeping new_crtc_state->mode == old_crtc_state->mode ensures that
+	 * future atomic_check cycles also compare equal, so mode_changed is
+	 * never set spuriously after this suppression.
+	 */
+	dp = display;
+	bridge = dp->bridge;
+	if (bridge && bridge->locked_timing.h_active != 0 && c_state->crtc) {
+		struct drm_crtc_state *new_crtc_state =
+			drm_atomic_get_new_crtc_state(a_state, c_state->crtc);
+		struct drm_crtc_state *old_crtc_state =
+			drm_atomic_get_old_crtc_state(a_state, c_state->crtc);
+
+		if (new_crtc_state && old_crtc_state &&
+		    new_crtc_state->mode_changed &&
+		    !new_crtc_state->active_changed &&
+		    !new_crtc_state->connectors_changed &&
+		    new_crtc_state->mode.hdisplay ==
+				bridge->locked_timing.h_active &&
+		    new_crtc_state->mode.vdisplay ==
+				bridge->locked_timing.v_active &&
+		    new_crtc_state->mode.clock <=
+				bridge->locked_timing.pixel_clk_khz) {
+			drm_mode_copy(&new_crtc_state->mode,
+				      &old_crtc_state->mode);
+			new_crtc_state->mode_changed = false;
+		}
 	}
 
 	return 0;

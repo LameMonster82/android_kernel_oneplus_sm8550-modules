@@ -751,6 +751,14 @@ static int dp_audio_on(struct dp_audio *dp_audio)
 		return -EINVAL;
 	}
 
+	/* Idempotent guard: skip if audio is already on (e.g., when
+	 * dp_display_pre_disable() skipped the paired audio->off() during
+	 * a transient display reconfiguration). */
+	if (atomic_read(&audio->session_on)) {
+		DP_DEBUG("audio already on, skipping\n");
+		return 0;
+	}
+
 	dp_audio_register_ext_disp(audio);
 
 	ext = &audio->ext_audio_data;
