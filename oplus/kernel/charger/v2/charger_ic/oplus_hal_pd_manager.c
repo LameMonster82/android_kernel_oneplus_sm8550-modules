@@ -33,7 +33,7 @@
 #define BC12_TIMEOUT_MS			1500
 #define MICRO_5V 			5000
 #define DELAY_TIME			100
-#define MAX_PD_INPUT_CURRENT		2000
+#define MAX_PD_INPUT_CURRENT		3000
 #define VBUS_5V			5000
 #define VBUS_9V			9000
 
