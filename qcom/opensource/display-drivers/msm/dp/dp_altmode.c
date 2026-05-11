@@ -29,6 +29,9 @@ struct dp_altmode_private {
 	struct altmode_client *amclient;
 	bool connected;
 	u32 lanes;
+	bool last_multi_func;
+	struct delayed_work dock_hpd_work;
+	u8 dock_hpd_retry;
 };
 
 enum dp_altmode_pin_assignment {
@@ -107,6 +110,30 @@ static void dp_altmode_send_pan_ack(struct altmode_client *amclient,
 	DP_DEBUG("port=%d\n", port_index);
 }
 
+#define DOCK_HPD_RETRY_MAX   5
+#define DOCK_HPD_RETRY_DELAY 5000
+
+static void dp_altmode_dock_hpd_work_fn(struct work_struct *work)
+{
+	struct dp_altmode_private *altmode = container_of(work,
+			struct dp_altmode_private, dock_hpd_work.work);
+
+	if (!altmode->connected)
+		return;
+
+	altmode->dock_hpd_retry++;
+	DP_DEBUG("dock: synthesizing HPD high (attempt %d/%d)\n",
+			altmode->dock_hpd_retry, DOCK_HPD_RETRY_MAX);
+	altmode->dp_altmode.base.hpd_high = true;
+
+	if (altmode->dp_cb && altmode->dp_cb->attention)
+		altmode->dp_cb->attention(altmode->dev);
+
+	if (altmode->dock_hpd_retry < DOCK_HPD_RETRY_MAX)
+		schedule_delayed_work(&altmode->dock_hpd_work,
+				msecs_to_jiffies(DOCK_HPD_RETRY_DELAY));
+}
+
 static int dp_altmode_notify(void *priv, void *data, size_t len)
 {
 	int rc = 0;
@@ -149,6 +176,7 @@ static int dp_altmode_notify(void *priv, void *data, size_t len)
 			altmode->connected = false;
 			altmode->dp_altmode.base.alt_mode_cfg_done = false;
 			altmode->dp_altmode.base.orientation = ORIENTATION_NONE;
+			cancel_delayed_work(&altmode->dock_hpd_work);
 			if (altmode->dp_cb && altmode->dp_cb->disconnect)
 				altmode->dp_cb->disconnect(altmode->dev);
 
@@ -169,6 +197,7 @@ static int dp_altmode_notify(void *priv, void *data, size_t len)
 		if (altmode->dp_altmode.base.multi_func)
 			altmode->lanes = 2;
 
+		altmode->last_multi_func = altmode->dp_altmode.base.multi_func;
 		DP_DEBUG("Connected=%d, lanes=%d\n",altmode->connected,altmode->lanes);
 
 		switch (orientation) {
@@ -194,10 +223,24 @@ static int dp_altmode_notify(void *priv, void *data, size_t len)
 
 		if (altmode->dp_cb && altmode->dp_cb->configure)
 			altmode->dp_cb->configure(altmode->dev);
+
+		/*
+		 * Some docks send configure with hpd_state=0 and never follow up
+		 * with a UCSI attention message. Schedule a fallback that synthesizes
+		 * HPD high after a delay so the connect attempt is not stuck.
+		 */
+		if (altmode->last_multi_func && !altmode->dp_altmode.base.hpd_high) {
+			altmode->dock_hpd_retry = 0;
+			cancel_delayed_work(&altmode->dock_hpd_work);
+			schedule_delayed_work(&altmode->dock_hpd_work,
+					msecs_to_jiffies(4000));
+		}
 		goto ack;
 	}
 
 	/* Attention */
+	cancel_delayed_work(&altmode->dock_hpd_work);
+
 	if (altmode->forced_disconnect)
 		goto ack;
 
@@ -292,6 +335,9 @@ struct dp_hpd *dp_altmode_get(struct device *dev, struct dp_hpd_cb *cb)
 	dp_altmode->base.simulate_connect = dp_altmode_simulate_connect;
 	dp_altmode->base.simulate_attention = dp_altmode_simulate_attention;
 
+	INIT_DELAYED_WORK(&altmode->dock_hpd_work,
+			dp_altmode_dock_hpd_work_fn);
+
 	rc = altmode_register_notifier(dev, dp_altmode_register, altmode);
 	if (rc < 0) {
 		DP_ERR("altmode probe notifier registration failed: %d\n", rc);
@@ -317,6 +363,8 @@ void dp_altmode_put(struct dp_hpd *dp_hpd)
 
 	altmode = container_of(dp_altmode, struct dp_altmode_private,
 			dp_altmode);
+
+	cancel_delayed_work_sync(&altmode->dock_hpd_work);
 
 	altmode_deregister_client(altmode->amclient);
 	altmode_deregister_notifier(altmode->dev, altmode);

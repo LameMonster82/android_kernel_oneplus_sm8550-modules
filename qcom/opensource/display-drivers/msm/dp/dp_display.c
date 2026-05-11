@@ -264,8 +264,13 @@ static bool dp_display_is_ds_bridge(struct dp_panel *panel)
 
 static bool dp_display_is_sink_count_zero(struct dp_display_private *dp)
 {
-	return dp_display_is_ds_bridge(dp->panel) &&
-		(dp->link->sink_count.count == 0);
+	if (!dp_display_is_ds_bridge(dp->panel))
+		return false;
+	if (dp->link->sink_count.count != 0)
+		return false;
+	if (dp->panel->edid_ctrl && dp->panel->edid_ctrl->edid)
+		return false;
+	return true;
 }
 
 static bool dp_display_is_ready(struct dp_display_private *dp)
@@ -1079,7 +1084,7 @@ static int dp_display_host_init(struct dp_display_private *dp)
 	if (dp->hpd->orientation == ORIENTATION_CC2)
 		flip = true;
 
-	reset = dp->debug->sim_mode ? false : !dp->hpd->multi_func;
+	reset = dp->debug->sim_mode ? false : true;
 
 	rc = dp->power->init(dp->power, flip);
 	if (rc) {

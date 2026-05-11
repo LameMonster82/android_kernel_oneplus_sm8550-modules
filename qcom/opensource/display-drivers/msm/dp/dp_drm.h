@@ -21,6 +21,8 @@ struct dp_bridge {
 	struct dp_display *display;
 	struct dp_display_mode dp_mode;
 	void *dp_panel;
+	struct dp_panel_info locked_timing;
+	bool skip_stream_cycle;
 };
 
 

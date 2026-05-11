@@ -1871,12 +1871,9 @@ static int dp_panel_read_sink_caps(struct dp_panel *dp_panel,
 				&count, count_len);
 		if (rlen == count_len) {
 			count = DP_GET_SINK_COUNT(count);
-			if (!count) {
-				DP_ERR("no downstream ports connected\n");
-				panel->link->sink_count.count = 0;
-				rc = -ENOTCONN;
-				goto end;
-			}
+			panel->link->sink_count.count = count;
+			if (!count)
+				DP_DEBUG("no downstream sink count, attempting EDID\n");
 		}
 	}
 
@@ -1887,8 +1884,11 @@ static int dp_panel_read_sink_caps(struct dp_panel *dp_panel,
 	rc = dp_panel_read_edid(dp_panel, connector);
 	if (rc) {
 		DP_ERR("panel edid read failed, set failsafe mode\n");
-		return rc;
+		return downstream_ports ? -ENOTCONN : rc;
 	}
+
+	if (downstream_ports && !panel->link->sink_count.count)
+		panel->link->sink_count.count = 1;
 
 skip_edid:
 	dp_panel->widebus_en = panel->parser->has_widebus;
